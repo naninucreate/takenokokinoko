@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>きのこ vs たけのこ</title>
+  <style>
+    /* --- CSS スタイル --- */
+    body {
+      margin: 0;
+      padding: 0;
+      font-family: 'Helvetica Neue', Arial, sans-serif;
+      background-color: #f5f5f5;
+      display: flex;
+      flex-direction: column; /* コピーライトを下に配置するため調整 */
+      justify-content: center;
+      align-items: center;
+      height: 100vh;
+    }
+
+    .vote-wrapper {
+      width: 90%;
+      max-width: 600px;
+      background: white;
+      padding: 30px;
+      border-radius: 16px;
+      box-shadow: 0 10px 25px rgba(0,0,0,0.05);
+      text-align: center;
+      margin-bottom: 15px;
+    }
+
+    h1 {
+      font-size: 1.5rem;
+      color: #333;
+      margin-bottom: 20px;
+    }
+
+    /* 押し合いリアルタイムバーの土台 */
+    .vs-bar-container {
+      display: flex;
+      height: 50px;
+      border-radius: 25px;
+      overflow: hidden;
+      box-shadow: inset 0 2px 5px rgba(0,0,0,0.2);
+      margin: 30px 0;
+      background-color: #eee;
+    }
+
+    /* 左右のバーの設定（transitionでヌルッと動く） */
+    .sub-bar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 0 20px;
+      color: white;
+      font-weight: bold;
+      font-size: 1.1rem;
+      transition: width 0.8s cubic-bezier(0.25, 1, 0.5, 1);
+      box-sizing: border-box;
+      width: 50%; /* 初期値 */
+    }
+
+    /* きのこの山カラー（茶系） */
+    .kinoko-bar { background-color: #b45309; }
+    /* たけのこの里カラー（緑系） */
+    .takenoko-bar { background-color: #15803d; justify-content: flex-end; }
+    .takenoko-bar .percent { margin-right: auto; margin-left: 0; }
+
+    .vote-counts {
+      display: flex;
+      justify-content: space-around;
+      font-size: 1.2rem;
+      font-weight: bold;
+      margin-bottom: 25px;
+      color: #444;
+    }
+
+    /* ボタンエリア */
+    .buttons-container {
+      display: flex;
+      gap: 15px;
+    }
+    .btn {
+      flex: 1;
+      padding: 18px;
+      border: none;
+      border-radius: 12px;
+      font-size: 1.1rem;
+      font-weight: bold;
+      cursor: pointer;
+      color: white;
+      transition: transform 0.1s, opacity 0.2s;
+    }
+    .btn:active { transform: scale(0.98); }
+    .btn-k { background-color: #d97706; box-shadow: 0 4px #b45309; }
+    .btn-t { background-color: #16a34a; box-shadow: 0 4px #15803d; }
+    .btn-k:active { transform: translateY(4px); box-shadow: none; }
+    .btn-t:active { transform: translateY(4px); box-shadow: none; }
+
+    /* 表示・非表示切り替え用 */
+    .hidden { display: none !important; }
+    
+    #result-screen {
+      animation: fadeIn 0.5s ease-in-out;
+    }
+    @keyframes fadeIn {
+      from { opacity: 0; }
+      to { opacity: 1; }
+    }
+
+    /* 免責事項・コピーライトの装飾 */
+    .footer-text {
+      font-size: 0.8rem;
+      color: #777;
+      margin: 5px 0;
+      text-align: center;
+    }
+  </style>
+</head>
+<body>
+
+  <div class="vote-wrapper">
+    <h1>どっち派？</h1>
+
+    <div id="vote-screen">
+      <p style="color: #666; margin-bottom: 30px;">あなたの推しを選んで投票してください。<br>※投票は1人1回まで。投票後にリアルタイム結果が表示されます。</p>
+      <div class="buttons-container">
+        <button id="btn-kinoko" class="btn btn-k">きのこの山 に投票</button>
+        <button id="btn-takenoko" class="btn btn-t">たけのこの里 に投票</button>
+      </div>
+    </div>
+
+    <div id="result-screen" class="hidden">
+      <div class="vs-bar-container">
+        <div id="bar-kinoko" class="sub-bar kinoko-bar">
+          <span class="label">きのこ</span>
+          <span id="percent-kinoko" class="percent">50%</span>
+        </div>
+        <div id="bar-takenoko" class="sub-bar takenoko-bar">
+          <span id="percent-takenoko" class="percent">50%</span>
+          <span class="label">たけのこ</span>
+        </div>
+      </div>
+
+      <div class="vote-counts">
+        <span id="count-kinoko">0 票</span>
+        <span>vs</span>
+        <span id="count-takenoko">0 票</span>
+      </div>
+      <p style="color: #888; font-size: 0.9rem;">既に投票済みのため、現在のリアルタイム結果を表示しています。</p>
+    </div>
+  </div>
+
+  <p class="footer-text">このアプリを使用して発生した問題等に関して、開発者は一切の責任を負いません。</p>
+  <p class="footer-text">&copy; T.s</p>
+
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-app.js";
+    import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-auth.js";
+    import { getDatabase, ref, onValue, runTransaction, get } from "https://www.gstatic.com/firebasejs/12.13.0/firebase-database.js";
+
+    // Firebase設定情報
+    const firebaseConfig = {
+      apiKey: "AIzaSyAzOVADDPh1oNMKuNaZBwsk1zzRoinpUBg",
+      authDomain: "onsnapshot-7cf6a.firebaseapp.com",
+      databaseURL: "https://onsnapshot-7cf6a-default-rtdb.asia-southeast1.firebasedatabase.app",
+      projectId: "onsnapshot-7cf6a",
+      storageBucket: "onsnapshot-7cf6a.firebasestorage.app",
+      messagingSenderId: "512914893459",
+      appId: "1:512914893459:web:73971cd657e75b7035bb66",
+      measurementId: "G-Q35RPF2GD2"
+    };
+
+    // 初期化
+    const app = initializeApp(firebaseConfig);
+    const auth = getAuth(app);
+    const db = getDatabase(app);
+
+    // DOM要素
+    const voteScreen = document.getElementById('vote-screen');
+    const resultScreen = document.getElementById('result-screen');
+    const barKinoko = document.getElementById('bar-kinoko');
+    const barTakenoko = document.getElementById('bar-takenoko');
+    const txtPercentKinoko = document.getElementById('percent-kinoko');
+    const txtPercentTakenoko = document.getElementById('percent-takenoko');
+    const txtCountKinoko = document.getElementById('count-kinoko');
+    const txtCountTakenoko = document.getElementById('count-takenoko');
+    const btnKinoko = document.getElementById('btn-kinoko');
+    const btnTakenoko = document.getElementById('btn-takenoko');
+
+    let currentUser = null;
+
+    // 認証状態の監視 ＆ 同一判定のチェック
+    onAuthStateChanged(auth, async (user) => {
+      if (user) {
+        currentUser = user;
+        const userVoteRef = ref(db, `user_votes/${user.uid}`);
+        const snapshot = await get(userVoteRef);
+        
+        if (snapshot.exists()) {
+          showResults();
+        }
+      } else {
+        signInAnonymously(auth).catch((error) => {
+          console.error("匿名ログインに失敗しました:", error);
+        });
+      }
+    });
+
+    // 画面のバーと票数を更新する処理
+    function updateUI(kinokoVotes, takenokoVotes) {
+      const total = kinokoVotes + takenokoVotes;
+      const kinokoPercent = total === 0 ? 50 : Math.round((kinokoVotes / total) * 100);
+      const takenokoPercent = total === 0 ? 50 : 100 - kinokoPercent;
+
+      if (barKinoko) barKinoko.style.width = `${kinokoPercent}%`;
+      if (barTakenoko) barTakenoko.style.width = `${takenokoPercent}%`;
+      if (txtPercentKinoko) txtPercentKinoko.innerText = `${kinokoPercent}%`;
+      if (txtPercentTakenoko) txtPercentTakenoko.innerText = `${takenokoPercent}%`;
+      if (txtCountKinoko) txtCountKinoko.innerText = `${kinokoVotes.toLocaleString()} 票`;
+      if (txtCountTakenoko) txtCountTakenoko.innerText = `${takenokoVotes.toLocaleString()} 票`;
+    }
+
+    // 結果画面への切り替えとリアルタイムデータ同期
+    function showResults() {
+      if (voteScreen) voteScreen.classList.add('hidden');
+      if (resultScreen) resultScreen.classList.remove('hidden');
+
+      const votesRef = ref(db, "votes");
+      onValue(votesRef, (snapshot) => {
+        const data = snapshot.val();
+        if (data) {
+          updateUI(data.kinoko_count || 0, data.takenoko_count || 0);
+        } else {
+          updateUI(0, 0);
+        }
+      });
+    }
+
+    // 投票ボタンを押したときの処理
+    async function handleVote(faction) {
+      if (!currentUser) return;
+
+      showResults();
+
+      // ① ユーザーの投票履歴をロック
+      const userVoteRef = ref(db, `user_votes/${currentUser.uid}`);
+      runTransaction(userVoteRef, (currentValue) => {
+        return faction;
+      });
+
+      // ② 全体の合計カウントを加算
+      const targetCount = faction === 'kinoko' ? 'kinoko_count' : 'takenoko_count';
+      const targetRef = ref(db, `votes/${targetCount}`);
+      runTransaction(targetRef, (currentValue) => {
+        return (currentValue || 0) + 1;
+      });
+    }
+
+    // ボタンのイベント
+    if (btnKinoko) btnKinoko.addEventListener('click', () => handleVote('kinoko'));
+    if (btnTakenoko) btnTakenoko.addEventListener('click', () => handleVote('takenoko'));
+  </script>
+</body>
+</html>
